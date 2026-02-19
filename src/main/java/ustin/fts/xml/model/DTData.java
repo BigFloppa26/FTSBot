@@ -13,4 +13,15 @@ public class DTData {
     private String decisionDate;
     private String prDocumentNumber;
     private String prDocumentDate;
+
+    @Override
+    public String toString() {
+        return "DTData{" +
+               "originCountryCode='" + originCountryCode + '\'' +
+               ", decisionCode='" + decisionCode + '\'' +
+               ", decisionDate='" + decisionDate + '\'' +
+               ", prDocumentNumber='" + prDocumentNumber + '\'' +
+               ", prDocumentDate='" + prDocumentDate + '\'' +
+               '}';
+    }
 }

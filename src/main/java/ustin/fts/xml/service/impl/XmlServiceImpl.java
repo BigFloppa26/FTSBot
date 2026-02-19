@@ -7,15 +7,18 @@ import org.w3c.dom.Attr;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import org.xml.sax.SAXException;
 import ustin.fts.xml.model.DTData;
 import ustin.fts.xml.service.XmlService;
 
 import javax.xml.namespace.NamespaceContext;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.xpath.XPath;
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathFactory;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -27,10 +30,15 @@ import java.util.Map;
 public class XmlServiceImpl implements XmlService {
 
     @Override
-    public DTData parseXml(byte[] xmlData) throws Exception {
+    public DTData parseXml(byte[] xmlData) {
         var factory = DocumentBuilderFactory.newInstance();
         factory.setNamespaceAware(true);
-        var doc = factory.newDocumentBuilder().parse(new ByteArrayInputStream(xmlData));
+        Document doc = null;
+        try {
+            doc = factory.newDocumentBuilder().parse(new ByteArrayInputStream(xmlData));
+        } catch (SAXException | IOException | ParserConfigurationException e) {
+            throw new RuntimeException(e);
+        }
 
         // Извлекаем namespace
         Map<String, String> namespaces = new HashMap<>();

@@ -7,7 +7,7 @@ import javax.xml.xpath.XPath;
 
 public interface XmlService {
 
-    DTData parseXml(byte[] xmlData) throws Exception;
+    DTData parseXml(byte[] xmlData);
 
     String getXmlValue(Document doc, XPath xpath, String xpathExpr, String tagName);
 

@@ -9,18 +9,12 @@ import org.telegram.telegrambots.meta.api.methods.GetFile;
 import org.telegram.telegrambots.meta.api.methods.send.SendMessage;
 import org.telegram.telegrambots.meta.api.objects.Update;
 import org.telegram.telegrambots.meta.generics.TelegramClient;
-import org.w3c.dom.*;
 import ustin.fts.service.UserState;
 import ustin.fts.service.UserStateService;
 import ustin.fts.service.handlers.CommandHandler;
 import ustin.fts.xml.model.DTData;
 import ustin.fts.xml.service.XmlService;
 
-import javax.xml.namespace.NamespaceContext;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.xpath.XPath;
-import javax.xml.xpath.XPathConstants;
-import javax.xml.xpath.XPathFactory;
 import java.io.ByteArrayInputStream;
 import java.net.URL;
 import java.util.*;
@@ -38,149 +32,125 @@ public class DocumentHandler implements CommandHandler {
 
     private static final String XLSX_EXT = "xlsx";
     private static final String XML_EXT = "xml";
-    private static final String PROCESS_COMMAND = "/process";
-    private static final String CANCEL_COMMAND = "/cancel";
+    private static final String PROCESS = "/process";
+    private static final String CANCEL = "/cancel";
 
     @Override
     public boolean canHandle(Update update) {
-        if (update.hasMessage()) {
-            var message = update.getMessage();
-            if (message.hasDocument()) return true;
-            if (message.hasText()) {
-                var text = message.getText();
-                return text.equals(PROCESS_COMMAND) || text.equals(CANCEL_COMMAND);
-            }
-        }
-        return false;
+        if (!update.hasMessage()) return false;
+        var msg = update.getMessage();
+        return msg.hasDocument() ||
+               (msg.hasText() && (msg.getText().equals(PROCESS) || msg.getText().equals(CANCEL)));
     }
 
     @Override
     public void execute(Update update, TelegramClient client) {
         var chatId = update.getMessage().getChatId();
-
         try {
             var state = stateService.getState(chatId);
             if (state == null || !"/fts".equals(state.getCurrentCommand())) {
-                if (update.getMessage().hasDocument()) {
-                    sendMsg(client, chatId, "📁 Файл получен, но сначала введите /fts");
-                }
+                if (update.getMessage().hasDocument())
+                    sendMsg(client, chatId, "📁 Сначала введите /fts");
                 return;
             }
 
             if (update.getMessage().hasText()) {
-                handleTextCommand(update, client, chatId, state);
-            } else if (update.getMessage().hasDocument()) {
-                handleDocument(update, client, chatId, state);
+                handleText(update, client, chatId, state);
+            } else {
+                handleDoc(update, client, chatId, state);
             }
         } catch (Exception e) {
             log.error("Error", e);
-            sendMsg(client, chatId, "❌ Ошибка: " + e.getMessage());
+            sendMsg(client, chatId, "❌ " + e.getMessage());
         }
     }
 
-    private void handleTextCommand(Update update, TelegramClient client, Long chatId, UserState state) {
+    private void handleText(Update update, TelegramClient client, Long chatId, UserState state) {
         var text = update.getMessage().getText();
-        if (text.equals(PROCESS_COMMAND)) {
-            handleProcessCommand(client, chatId, state);
-        } else if (text.equals(CANCEL_COMMAND)) {
+        if (text.equals(PROCESS)) {
+            processAll(client, chatId, state);
+        } else if (text.equals(CANCEL)) {
             stateService.removeState(chatId);
-            sendMsg(client, chatId, "❌ Загрузка отменена");
+            sendMsg(client, chatId, "❌ Отменено");
         }
     }
 
-    private void handleProcessCommand(TelegramClient client, Long chatId, UserState state) {
-        List<String> receivedFiles = state.getReceivedFiles();
-
-        boolean hasXlsx = receivedFiles.stream().anyMatch(id -> id.endsWith("." + XLSX_EXT));
-        long xmlCount = receivedFiles.stream().filter(id -> id.endsWith("." + XML_EXT)).count();
+    private void processAll(TelegramClient client, Long chatId, UserState state) {
+        var files = state.getReceivedFiles();
+        var hasXlsx = files.stream().anyMatch(f -> f.endsWith("." + XLSX_EXT));
+        var xmlCount = files.stream().filter(f -> f.endsWith("." + XML_EXT)).count();
 
         if (!hasXlsx || xmlCount == 0) {
             sendMsg(client, chatId, "❌ Нужен 1 XLSX и минимум 1 XML");
             return;
         }
 
-        sendMsg(client, chatId, "🔄 Начинаем обработку...");
-
+        sendMsg(client, chatId, "🔄 Обработка...");
         try {
-            processFiles(receivedFiles, chatId, client);
+            processFiles(files, chatId, client);
             stateService.removeState(chatId);
         } catch (Exception e) {
-            log.error("Processing error", e);
-            sendMsg(client, chatId, "❌ Ошибка: " + e.getMessage());
+            log.error("Error", e);
+            sendMsg(client, chatId, "❌ " + e.getMessage());
         }
     }
 
-    private void handleDocument(Update update, TelegramClient client, Long chatId, UserState state) {
+    private void handleDoc(Update update, TelegramClient client, Long chatId, UserState state) {
         var doc = update.getMessage().getDocument();
         var ext = getExt(doc.getFileName());
-        List<String> receivedFiles = state.getReceivedFiles();
+        var files = state.getReceivedFiles();
 
         if (!ext.equals(XLSX_EXT) && !ext.equals(XML_EXT)) {
             sendMsg(client, chatId, "❌ Только .xlsx и .xml");
             return;
         }
 
-        if (ext.equals(XLSX_EXT) && receivedFiles.stream().anyMatch(id -> id.endsWith("." + XLSX_EXT))) {
-            sendMsg(client, chatId, "❌ Можно только один XLSX");
+        if (ext.equals(XLSX_EXT) && files.stream().anyMatch(f -> f.endsWith("." + XLSX_EXT))) {
+            sendMsg(client, chatId, "❌ Только один XLSX");
             return;
         }
 
         stateService.addReceivedFile(chatId, doc.getFileId() + "." + ext);
 
-        long xmlCount = state.getReceivedFiles().stream().filter(id -> id.endsWith("." + XML_EXT)).count();
-        boolean hasXlsx = state.getReceivedFiles().stream().anyMatch(id -> id.endsWith("." + XLSX_EXT));
+        var xmlCount = state.getReceivedFiles().stream().filter(f -> f.endsWith("." + XML_EXT)).count();
+        var hasXlsx = state.getReceivedFiles().stream().anyMatch(f -> f.endsWith("." + XLSX_EXT));
 
         sendMsg(client, chatId, String.format(
                 "✅ Загружено\n📊 XLSX: %s\n📄 XML: %d\n\n%s - старт\n%s - отмена",
-                hasXlsx ? "1/1" : "0/1", xmlCount, PROCESS_COMMAND, CANCEL_COMMAND));
+                hasXlsx ? "1/1" : "0/1", xmlCount, PROCESS, CANCEL));
     }
 
     private void processFiles(List<String> fileIds, Long chatId, TelegramClient client) throws Exception {
         byte[] xlsxData = null;
-        List<byte[]> xmlFilesList = new ArrayList<>();
+        List<byte[]> xmlList = new ArrayList<>();
 
-        for (String fileId : fileIds) {
-            String[] parts = fileId.split("\\.(?=[^.]+$)");
-            byte[] bytes = download(parts[0], client);
-            String ext = parts[1];
-
-            if (XLSX_EXT.equals(ext)) {
+        for (String id : fileIds) {
+            var parts = id.split("\\.(?=[^.]+$)");
+            var bytes = download(parts[0], client);
+            if (XLSX_EXT.equals(parts[1])) {
                 xlsxData = bytes;
-            } else if (XML_EXT.equals(ext)) {
-                xmlFilesList.add(bytes);  // Добавляем байты XML в список
+            } else {
+                xmlList.add(bytes);
             }
         }
 
-        if (xlsxData == null || xmlFilesList.isEmpty()) {
-            throw new RuntimeException("Нет XLSX или XML файлов");
+        if (xlsxData == null || xmlList.isEmpty())
+            throw new RuntimeException("Нет файлов");
+
+        var dtList = xmlList.stream()
+                .map(xmlService::parseXml)
+                .peek(dt -> log.info("ДТ: {}", dt))
+                .toList();
+
+        // ========== РАБОТА С XLSX ==========
+        try (var wb = new XSSFWorkbook(new ByteArrayInputStream(xlsxData))) {
+            var sheet = wb.getSheetAt(0);
+            // TODO: Ваша логика с dtList и sheet
+            log.info("XLSX: {} строк, XML: {}", sheet.getPhysicalNumberOfRows(), dtList.size());
         }
+        // ===================================
 
-        // Парсим все XML файлы
-        List<DTData> allDtData = new ArrayList<>();
-        for (byte[] xmlBytes : xmlFilesList) {
-            var dtData = xmlService.parseXml(xmlBytes);
-            allDtData.add(dtData);
-            log.info("ДТ: {}", dtData);
-        }
-
-        // ==================== РАБОТА С XLSX ФАЙЛОМ ====================
-        // xlsxData - байты XLSX файла
-        // allDtData - список объектов DTData с данными из всех XML
-        // xmlFilesList - список байтов XML файлов (если нужен доступ к исходным данным)
-
-        try (XSSFWorkbook workbook = new XSSFWorkbook(new ByteArrayInputStream(xlsxData))) {
-            var sheet = workbook.getSheetAt(0);
-
-            // TODO: Здесь ваша логика работы с Excel
-
-
-            log.info("XLSX обработан, строк: {}, XML файлов: {}",
-                    sheet.getPhysicalNumberOfRows(), allDtData.size());
-        }
-        // =============================================================
-
-        sendMsg(client, chatId, "✅ Обработано файлов:\n" + "📊 XLSX: 1 файл\n" +
-                                String.format("📄 XML: %d файлов\n\n", allDtData.size()));
+        sendMsg(client, chatId, String.format("✅ Готово: %d XML", dtList.size()));
     }
 
     private byte[] download(String fileId, TelegramClient client) throws Exception {
@@ -204,7 +174,5 @@ public class DocumentHandler implements CommandHandler {
     }
 
     @Override
-    public String getCommandName() {
-        return "document_handler";
-    }
+    public String getCommandName() { return "document_handler"; }
 }
